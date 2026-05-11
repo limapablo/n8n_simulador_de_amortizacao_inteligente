@@ -1,4 +1,4 @@
-# 📊 Simulador de Amortização Inteligente Utilizando Pesquisa Operacional (n8n)
+# 📊 Simulador de Amortização Inteligente utilizando Pesquisa Operacional (n8n)
 
 Este projeto é uma ferramenta avançada de apoio à decisão financeira, desenvolvida no **n8n**. Ele utiliza modelos matemáticos de **Engenharia de Custos** e **Estatística** para determinar a melhor estratégia entre amortizar dívidas ou investir em ativos atrelados à Selic.
 
