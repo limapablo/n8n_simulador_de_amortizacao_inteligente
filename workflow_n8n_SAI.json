@@ -1,0 +1,869 @@
+{
+  "name": "Análise Dívida vs Investimento Selic",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.11/dados/ultimos/1?formato=json",
+        "options": {}
+      },
+      "id": "6aae00e8-9dc9-451b-86e7-7c2c0658c1d8",
+      "name": "Buscar Taxa Selic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        464,
+        408
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ========================================\n// MOTOR DE INFERÊNCIA - PESQUISA OPERACIONAL\n// Análise de VPL, Sensibilidade, Monte Carlo, LTV e Consórcio\n// ========================================\n\nconst form = $(\"Simulador de Amortização Inteligente\").first().json;\nconst api = $(\"Buscar Taxa Selic\").first().json;\n\n// --- INPUTS ---\nconst modalidade = form[\"modalidade\"];\nconst valorBem = parseFloat(form[\"valor_bem\"]) || 0;\nconst valorEntrada = parseFloat(form[\"valor_entrada\"]) || 0;\nconst dividaTotal = parseFloat(form[\"valor_divida\"]);\nconst jurosAnualBanco = parseFloat(form[\"taxa_juros\"]) / 100;\nconst aporteExtra = parseFloat(form[\"valor_aporte\"]) || 0;\nconst prazoMeses = parseInt(form[\"prazo_meses\"]) || 12;\nconst tipoDivida = form[\"tipo_divida\"];\nconst taxaAdminConsorcio = parseFloat(form[\"taxa_admin_consorcio\"]) || 0;\nconst prazoConsorcio = parseInt(form[\"prazo_consorcio\"]) || 0;\nconst tempoContemplacao = parseInt(form[\"tempo_contemplacao\"]) || 0;\nconst valorAluguel = parseFloat(form[\"valor_aluguel\"]) || 0;\nconst valorLance = parseFloat(form[\"valor_lance\"]) || 0;\n\n// --- DADOS DE MERCADO ---\nconst selicDiaria = parseFloat(api.valor);\nconst selicAnualBruta = (Math.pow((1 + selicDiaria/100), 252) - 1);\n\n// IR Regressivo\nlet aliquotaIR = 0.225;\nif (prazoMeses >= 24) aliquotaIR = 0.15;\nelse if (prazoMeses >= 12) aliquotaIR = 0.175;\nelse if (prazoMeses >= 6) aliquotaIR = 0.20;\n\nconst multiplicadorIR = 1 - aliquotaIR;\nconst selicAnualLiquida = selicAnualBruta * multiplicadorIR;\n\n// IPCA (se pós-fixada)\nconst dadosIPCA = $(\"Buscar IPCA\").all();\nconst ipcaAcumulado = dadosIPCA.reduce((acc, item) => {\n  return acc * (1 + parseFloat(item.json.valor) / 100);\n}, 1);\nconst ipcaAnual = ((ipcaAcumulado - 1) * 100);\n\nlet custoRealDivida = jurosAnualBanco * 100;\nif (tipoDivida === \"Pós-fixada (IPCA+)\") {\n  custoRealDivida = (jurosAnualBanco * 100) + ipcaAnual;\n}\n\n// ========================================\n// MÓDULO 1: ANÁLISE DE LTV (LOAN-TO-VALUE)\n// ========================================\nlet ltvAtual = 0;\nlet valorFinanciado = 0;\nlet decisaoEntrada = \"\";\nlet analiseEntrada = \"\";\nlet entradaOtima = 0;\nlet entradaMinima = 0;\nlet entradaMaxima = 0;\n\nif (modalidade === \"Análise de Entrada (LTV)\" && valorBem > 0) {\n  valorFinanciado = valorBem - valorEntrada;\n  ltvAtual = (valorFinanciado / valorBem) * 100;\n  \n  // Regra de Ouro: Se Selic Líquida > Juros, entrada mínima. Se Juros > Selic, entrada máxima.\n  const selicLiquidaPercent = selicAnualLiquida * 100;\n  \n  if (selicLiquidaPercent > custoRealDivida) {\n    decisaoEntrada = \"ENTRADA MÍNIMA\";\n    entradaOtima = valorBem * 0.20; // 20% mínimo típico\n    analiseEntrada = `Como a Selic Líquida (${selicLiquidaPercent.toFixed(2)}%) supera o custo da dívida (${custoRealDivida.toFixed(2)}%), a estratégia ótima é dar a ENTRADA MÍNIMA e manter o capital investido.`;\n  } else {\n    decisaoEntrada = \"ENTRADA MÁXIMA\";\n    entradaOtima = valorBem * 0.50; // 50% para melhor faixa de juros\n    analiseEntrada = `Como o custo da dívida (${custoRealDivida.toFixed(2)}%) supera a Selic Líquida (${selicLiquidaPercent.toFixed(2)}%), a estratégia ótima é dar a ENTRADA MÁXIMA possível sem comprometer sua reserva de emergência.`;\n  }\n  \n  entradaMinima = valorBem * 0.20;\n  entradaMaxima = valorBem * 0.50;\n}\n\n// ========================================\n// MÓDULO 2: FINANCIAMENTO VS CONSÓRCIO\n// ========================================\nlet custoTotalFinanciamento = 0;\nlet custoTotalConsorcio = 0;\nlet custoOportunidadeEspera = 0;\nlet decisaoModalidade = \"\";\nlet analiseModalidade = \"\";\nlet taxaEquivalenteConsorcio = 0;\n\nif (modalidade === \"Financiamento vs Consórcio\" && prazoConsorcio > 0) {\n  // Custo Total do Financiamento (Sistema SAC simplificado)\n  const taxaMensalFinanc = Math.pow(1 + (custoRealDivida/100), 1/12) - 1;\n  const parcelaFinanc = dividaTotal * (taxaMensalFinanc * Math.pow(1 + taxaMensalFinanc, prazoMeses)) / (Math.pow(1 + taxaMensalFinanc, prazoMeses) - 1);\n  custoTotalFinanciamento = (parcelaFinanc * prazoMeses) - dividaTotal;\n  \n  // Custo Total do Consórcio\n  const custoAdministracao = dividaTotal * (taxaAdminConsorcio / 100);\n  const fundoReserva = dividaTotal * 0.02; // Estimativa 2%\n  const seguroConsorcio = dividaTotal * 0.01; // Estimativa 1%\n  custoTotalConsorcio = custoAdministracao + fundoReserva + seguroConsorcio;\n  \n  // Taxa Equivalente Mensal do Consórcio\n  taxaEquivalenteConsorcio = (Math.pow(1 + (custoTotalConsorcio / dividaTotal), 1/prazoConsorcio) - 1) * 100;\n  \n  // Custo de Oportunidade da Espera (Aluguel durante contemplação)\n  custoOportunidadeEspera = valorAluguel * tempoContemplacao;\n  \n  // Ajuste do Lance (se houver)\n  let custoLance = 0;\n  if (valorLance > 0) {\n    // O lance antecipa a entrada, perdendo rendimento\n    custoLance = valorLance * (selicAnualLiquida * (tempoContemplacao/12));\n  }\n  \n  const custoRealConsorcio = custoTotalConsorcio + custoOportunidadeEspera + custoLance;\n  \n  if (custoTotalFinanciamento < custoRealConsorcio) {\n    decisaoModalidade = \"FINANCIAMENTO\";\n    analiseModalidade = `O financiamento é a solução ótima. Custo Total: R$ ${custoTotalFinanciamento.toFixed(2)} vs Consórcio: R$ ${custoRealConsorcio.toFixed(2)} (incluindo R$ ${custoOportunidadeEspera.toFixed(2)} de aluguel durante ${tempoContemplacao} meses de espera).`;\n  } else {\n    decisaoModalidade = \"CONSÓRCIO\";\n    analiseModalidade = `O consórcio é a solução ótima. Custo Total: R$ ${custoRealConsorcio.toFixed(2)} vs Financiamento: R$ ${custoTotalFinanciamento.toFixed(2)}. Requer disciplina e ${tempoContemplacao} meses de espera estimados.`;\n  }\n}\n\n// ========================================\n// MÓDULO 3: AMORTIZAÇÃO VS INVESTIMENTO (ORIGINAL)\n// ========================================\nconst custoMensalBanco = Math.pow(1 + (custoRealDivida/100), 1/12) - 1;\nconst rendimentoMensalSelic = Math.pow(1 + selicAnualLiquida, 1/12) - 1;\n\nlet vplAmortizar = 0;\nlet vplInvestir = 0;\n\nif (aporteExtra > 0) {\n  for (let t = 1; t <= prazoMeses; t++) {\n      vplAmortizar += (aporteExtra * custoMensalBanco) / Math.pow(1 + rendimentoMensalSelic, t);\n  }\n  \n  for (let t = 1; t <= prazoMeses; t++) {\n      vplInvestir += (aporteExtra * rendimentoMensalSelic) / Math.pow(1 + rendimentoMensalSelic, t);\n  }\n}\n\n// --- ANÁLISE DE SENSIBILIDADE (Break-even) ---\nconst selicEquilibrio = (custoRealDivida / multiplicadorIR);\nconst margemSeguranca = ((selicAnualBruta * 100) - selicEquilibrio);\nconst margemSegurancaIPCA = 7.20 - ipcaAnual;\n\n// --- SIMULAÇÃO DE MONTE CARLO (1000 cenários com Box-Muller) ---\nconst numSimulacoes = 1000;\nconst volSelic = 0.015;\nconst volIPCA = 0.01;\n\nfunction normalRandom(mean, std) {\n    let u = 0, v = 0;\n    while(u === 0) u = Math.random();\n    while(v === 0) v = Math.random();\n    let num = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);\n    return num * std + mean;\n}\n\nlet cenariosFavoraveis = 0;\nlet ganhosAcumulados = 0;\nlet vplMedioInvestir = 0;\nlet vplMedioAmortizar = 0;\n\nif (aporteExtra > 0) {\n  for (let i = 0; i < numSimulacoes; i++) {\n    const selicSimuladaAnual = normalRandom(selicAnualBruta, volSelic);\n    const rendimentoLiqSimulado = selicSimuladaAnual * multiplicadorIR;\n    \n    const ipcaSimuladoAnual = normalRandom(ipcaAnual / 100, volIPCA);\n    \n    let custoSimulado = jurosAnualBanco;\n    if (tipoDivida === \"Pós-fixada (IPCA+)\") {\n      custoSimulado = jurosAnualBanco + ipcaSimuladoAnual;\n    }\n    \n    const rendMensal = Math.pow(1 + rendimentoLiqSimulado, 1/12) - 1;\n    const custoMensal = Math.pow(1 + custoSimulado, 1/12) - 1;\n    \n    let vplInvestirSim = 0;\n    let vplAmortizarSim = 0;\n    \n    for (let t = 1; t <= prazoMeses; t++) {\n      vplInvestirSim += (aporteExtra * rendMensal) / Math.pow(1 + rendMensal, t);\n      vplAmortizarSim += (aporteExtra * custoMensal) / Math.pow(1 + rendMensal, t);\n    }\n    \n    vplMedioInvestir += vplInvestirSim;\n    vplMedioAmortizar += vplAmortizarSim;\n    \n    if (vplInvestirSim > vplAmortizarSim) {\n      cenariosFavoraveis++;\n    }\n    \n    ganhosAcumulados += (vplInvestirSim - vplAmortizarSim);\n  }\n}\n\nconst confiancaMonteCarlo = (cenariosFavoraveis / numSimulacoes) * 100;\nvplMedioInvestir = vplMedioInvestir / numSimulacoes;\nvplMedioAmortizar = vplMedioAmortizar / numSimulacoes;\nconst expectativaGanhoMedio = ganhosAcumulados / numSimulacoes;\n\n// --- PROJEÇÃO DE RIQUEZA LÍQUIDA ---\nconst ganhoInvestimento = aporteExtra * Math.pow((1 + selicAnualLiquida), prazoMeses/12);\nconst economiaAmortizacao = aporteExtra * (custoRealDivida/100) * (prazoMeses/12);\n\nconst patrimonioFinalInvestir = ganhoInvestimento;\nconst patrimonioFinalAmortizar = economiaAmortizacao;\nconst diferencaPatrimonial = patrimonioFinalInvestir - patrimonioFinalAmortizar;\n\n// --- CÁLCULO DE PARCELAS ECONOMIZADAS ---\nconst taxaMensal = custoRealDivida / 100 / 12;\nconst parcelasEconomizadas = aporteExtra > 0 ? Math.log(1 + (aporteExtra * taxaMensal) / (dividaTotal * taxaMensal)) / Math.log(1 + taxaMensal) : 0;\n\n// --- VEREDITO ---\nconst decisao = vplInvestir > vplAmortizar ? \"INVESTIR\" : \"AMORTIZAR\";\nconst ganhoReal = Math.abs(vplInvestir - vplAmortizar);\nconst deltaVPL = vplInvestir - vplAmortizar;\nconst spreadReal = (selicAnualLiquida * 100) - custoRealDivida;\n\nlet analise = \"\";\nlet insightPO = \"\";\n\nif (decisao === \"AMORTIZAR\") {\n  analise = \"No cenário atual, reduzir o passivo gera mais valor presente do que aplicar no mercado.\";\n  insightPO = `A decisão de amortizar é a solução ótima atual. O VPL da economia de juros (R$ ${vplAmortizar.toFixed(2)}) supera o VPL do rendimento líquido disponível no mercado (R$ ${vplInvestir.toFixed(2)}).`;\n} else {\n  analise = \"No cenário atual, seu capital trabalha com mais eficiência no mercado do que amortizando o passivo.\";\n  insightPO = `A decisão de investir é a solução ótima atual. O VPL do rendimento (R$ ${vplInvestir.toFixed(2)}) supera o VPL da economia de juros (R$ ${vplAmortizar.toFixed(2)}). Mesmo que a Selic caia até ${selicEquilibrio.toFixed(2)}% (margem de ${margemSeguranca.toFixed(2)}%), a decisão permanece válida.`;\n}\n\nconst dataHora = new Date().toLocaleString(\"pt-BR\", {timeZone: \"America/Sao_Paulo\"});\n\nreturn {\n  modalidade,\n  decisao,\n  analise,\n  insight_po: insightPO,\n  grau_confianca: `${confiancaMonteCarlo.toFixed(0)}% (Baseado em Simulação de Monte Carlo com Box-Muller)`,\n  confianca_percentual: confiancaMonteCarlo.toFixed(0),\n  \n  // LTV\n  ltv_atual: ltvAtual.toFixed(2),\n  valor_bem: valorBem.toFixed(2),\n  valor_entrada: valorEntrada.toFixed(2),\n  valor_financiado: valorFinanciado.toFixed(2),\n  decisao_entrada: decisaoEntrada,\n  analise_entrada: analiseEntrada,\n  entrada_otima: entradaOtima.toFixed(2),\n  entrada_minima: entradaMinima.toFixed(2),\n  entrada_maxima: entradaMaxima.toFixed(2),\n  \n  // Consórcio\n  decisao_modalidade: decisaoModalidade,\n  analise_modalidade: analiseModalidade,\n  custo_total_financiamento: custoTotalFinanciamento.toFixed(2),\n  custo_total_consorcio: custoTotalConsorcio.toFixed(2),\n  custo_oportunidade_espera: custoOportunidadeEspera.toFixed(2),\n  taxa_equivalente_consorcio: taxaEquivalenteConsorcio.toFixed(4),\n  tempo_contemplacao: tempoContemplacao,\n  \n  selic_anual_bruta: (selicAnualBruta * 100).toFixed(2),\n  selic_anual_liquida: (selicAnualLiquida * 100).toFixed(2),\n  selic_equilibrio: selicEquilibrio.toFixed(2),\n  margem_seguranca_selic: margemSeguranca.toFixed(2),\n  margem_seguranca_ipca: margemSegurancaIPCA.toFixed(2),\n  limite_ipca: \"7.20\",\n  custo_divida_nominal: (jurosAnualBanco * 100).toFixed(2),\n  custo_divida_real: custoRealDivida.toFixed(2),\n  ipca_acumulado: ipcaAnual.toFixed(2),\n  spread_real: spreadReal.toFixed(2),\n  \n  vpl_investir: vplInvestir.toFixed(2),\n  vpl_amortizar: vplAmortizar.toFixed(2),\n  delta_vpl: deltaVPL.toFixed(2),\n  ganho_vpl: ganhoReal.toFixed(2),\n  ganho_investimento: ganhoInvestimento.toFixed(2),\n  economia_amortizacao: economiaAmortizacao.toFixed(2),\n  diferenca_patrimonial: diferencaPatrimonial.toFixed(2),\n  patrimonio_final_investir: patrimonioFinalInvestir.toFixed(2),\n  patrimonio_final_amortizar: patrimonioFinalAmortizar.toFixed(2),\n  \n  parcelas_economizadas: Math.floor(parcelasEconomizadas),\n  \n  aliquota_ir: (aliquotaIR * 100).toFixed(1),\n  prazo_meses: prazoMeses,\n  valor_aporte: aporteExtra.toFixed(2),\n  valor_divida: dividaTotal.toFixed(2),\n  tipo_divida: tipoDivida,\n  \n  simulacoes_total: numSimulacoes,\n  cenarios_favoraveis: cenariosFavoraveis,\n  vpl_medio_investir: vplMedioInvestir.toFixed(2),\n  vpl_medio_amortizar: vplMedioAmortizar.toFixed(2),\n  expectativa_ganho_medio: expectativaGanhoMedio.toFixed(2),\n  volatilidade_selic: (volSelic * 100).toFixed(2),\n  volatilidade_ipca: (volIPCA * 100).toFixed(2),\n  \n  status_robustez: parseFloat(margemSeguranca) > 2 ? \"✅ Decisão Robusta\" : \"⚠️ Decisão Sensível\",\n  \n  data_hora: dataHora,\n  selic_diaria_bcb: selicDiaria.toFixed(5)\n};"
+      },
+      "id": "a5a3dabf-2daf-4144-afde-c517090d4e49",
+      "name": "Analisar e Recomendar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        504
+      ]
+    },
+    {
+      "parameters": {
+        "formTitle": "Simulador de Amortização Inteligente",
+        "formDescription": "Preencha os dados abaixo para descobrir se é melhor amortizar sua dívida ou investir o dinheiro.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Modalidade de Análise",
+              "fieldType": "dropdown",
+              "fieldName": "modalidade",
+              "defaultValue": "amortizacao",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Amortização vs Investimento"
+                  },
+                  {
+                    "option": "Análise de Entrada (LTV)"
+                  },
+                  {
+                    "option": "Financiamento vs Consórcio"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Valor do Bem/Imóvel",
+              "fieldType": "number",
+              "fieldName": "valor_bem",
+              "placeholder": "250000"
+            },
+            {
+              "fieldLabel": "Valor da Entrada",
+              "fieldType": "number",
+              "fieldName": "valor_entrada",
+              "placeholder": "50000"
+            },
+            {
+              "fieldLabel": "Valor Total da Dívida",
+              "fieldType": "number",
+              "fieldName": "valor_divida",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Taxa de Juros do Banco % ao ano",
+              "fieldType": "number",
+              "fieldName": "taxa_juros",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Valor que pretende pagar agora",
+              "fieldType": "number",
+              "fieldName": "valor_aporte"
+            },
+            {
+              "fieldLabel": "Prazo do investimento (meses)",
+              "fieldType": "number",
+              "fieldName": "prazo_meses",
+              "placeholder": "12",
+              "defaultValue": "12",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Tipo de dívida",
+              "fieldType": "dropdown",
+              "fieldName": "tipo_divida",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Prefixada"
+                  },
+                  {
+                    "option": "Pós-fixada (IPCA+)"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Taxa de Administração Consórcio (%)",
+              "fieldType": "number",
+              "fieldName": "taxa_admin_consorcio",
+              "placeholder": "15"
+            },
+            {
+              "fieldLabel": "Prazo do Consórcio (meses)",
+              "fieldType": "number",
+              "fieldName": "prazo_consorcio",
+              "placeholder": "100"
+            },
+            {
+              "fieldLabel": "Tempo Estimado até Contemplação (meses)",
+              "fieldType": "number",
+              "fieldName": "tempo_contemplacao",
+              "placeholder": "24"
+            },
+            {
+              "fieldLabel": "Valor do Aluguel Mensal",
+              "fieldType": "number",
+              "fieldName": "valor_aluguel",
+              "placeholder": "1500"
+            },
+            {
+              "fieldLabel": "Valor Disponível para Lance",
+              "fieldType": "number",
+              "fieldName": "valor_lance",
+              "placeholder": "0"
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "8e89611f-0651-43d9-83c8-7d0f7954a1f8",
+      "name": "Simulador de Amortização Inteligente",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        504
+      ],
+      "webhookId": "**INSERIR WEBHOOK ID**"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "=📊 Relatório de Pesquisa Operacional Financeira",
+        "completionMessage": "={{ $json.modalidade === \"Análise de Entrada (LTV)\" ? \"# 🏦 Análise de LTV (Loan-to-Value)\\n\\n## 🎯 Decisão Ótima: **\" + $json.decisao_entrada + \"**\\n\\n> \" + $json.analise_entrada + \"\\n\\n---\\n\\n## 📊 Indicadores de Alocação de Capital\\n\\n| Métrica | Valor |\\n|---------|-------|\\n| Valor do Bem | R$ \" + $json.valor_bem + \" |\\n| Entrada Atual | R$ \" + $json.valor_entrada + \" |\\n| Valor Financiado | R$ \" + $json.valor_financiado + \" |\\n| **LTV Atual** | **\" + $json.ltv_atual + \"%** |\\n\\n---\\n\\n## 💡 Estratégia de Entrada Ótima\\n\\n### Regra de Ouro da Pesquisa Operacional:\\n\\n**Se Selic Líquida > Juros da Dívida:** Entrada Mínima (manter capital investido)\\n**Se Juros da Dívida > Selic Líquida:** Entrada Máxima (reduzir passivo)\\n\\n### Faixas de Entrada:\\n\\n| Tipo | Valor | LTV Resultante |\\n|------|-------|----------------|\\n| Entrada Mínima (20%) | R$ \" + $json.entrada_minima + \" | 80% |\\n| **Entrada Ótima** | **R$ \" + $json.entrada_otima + \"** | **\" + ((parseFloat($json.valor_bem) - parseFloat($json.entrada_otima)) / parseFloat($json.valor_bem) * 100).toFixed(2) + \"%** |\\n| Entrada Máxima (50%) | R$ \" + $json.entrada_maxima + \" | 50% |\\n\\n---\\n\\n## 📈 Comparativo de Taxas\\n\\n| Indicador | Taxa |\\n|-----------|------|\\n| Selic Líquida (após IR) | \" + $json.selic_anual_liquida + \"% a.a. |\\n| Custo da Dívida | \" + $json.custo_divida_real + \"% a.a. |\\n| **Spread** | **\" + $json.spread_real + \"%** |\\n\\n⚠️ **Atenção:** Não comprometa sua reserva de emergência. A entrada ótima pressupõe que você mantém 6 meses de despesas em liquidez imediata.\\n\\n---\\n\\n⚙️ **Modelo de Otimização de Alocação de Ativos**\\n\\n*Análise realizada em \" + $json.data_hora + \" com dados do Banco Central do Brasil*\" : ($json.modalidade === \"Financiamento vs Consórcio\" ? \"# 🏛️ Financiamento vs Consórcio\\n\\n## 🎯 Solução Ótima: **\" + $json.decisao_modalidade + \"**\\n\\n> \" + $json.analise_modalidade + \"\\n\\n---\\n\\n## 💰 Comparativo de Custos Totais\\n\\n| Modalidade | Custo Total |\\n|------------|-------------|\\n| 💳 Financiamento | R$ \" + $json.custo_total_financiamento + \" |\\n| 🎲 Consórcio (Base) | R$ \" + $json.custo_total_consorcio + \" |\\n| 🏠 Custo de Oportunidade (Aluguel) | R$ \" + $json.custo_oportunidade_espera + \" |\\n| **Consórcio (Real)** | **R$ \" + (parseFloat($json.custo_total_consorcio) + parseFloat($json.custo_oportunidade_espera)).toFixed(2) + \"** |\\n\\n---\\n\\n## 📊 Análise de Engenharia Financeira\\n\\n### Financiamento:\\n* **Custo Efetivo Total (CET):** \" + $json.custo_divida_real + \"% a.a.\\n* **Prazo:** \" + $json.prazo_meses + \" meses\\n* **Liquidez:** Imediata (bem adquirido na hora)\\n* **Previsibilidade:** Alta (parcelas fixas ou indexadas)\\n\\n### Consórcio:\\n* **Taxa Equivalente Mensal:** \" + $json.taxa_equivalente_consorcio + \"%\\n* **Prazo Total:** \" + ($json.tempo_contemplacao > 0 ? $json.tempo_contemplacao : \"N/A\") + \" meses\\n* **Tempo até Contemplação:** \" + $json.tempo_contemplacao + \" meses (estimado)\\n* **Liquidez:** Indeterminada (depende de sorteio/lance)\\n* **Custo Oculto:** Aluguel durante espera\\n\\n---\\n\\n## 🎯 Insight de Pesquisa Operacional\\n\\n\" + ($json.decisao_modalidade === \"FINANCIAMENTO\" ? \"O financiamento é a solução ótima quando o **Custo de Oportunidade da Espera** (aluguel + perda de rendimento) supera a diferença de taxas. Em cenários onde T < 30 meses, o financiamento tende a ser matematicamente superior.\" : \"O consórcio é a solução ótima para quem tem **disciplina financeira** e **não tem urgência**. A economia de juros compostos compensa a espera, desde que você não pague aluguel ou tenha custos de oportunidade elevados.\") + \"\\n\\n---\\n\\n## ⚠️ Fatores de Risco\\n\\n### Consórcio:\\n* **Risco de Liquidez:** Contemplação pode demorar mais que o estimado\\n* **Custo de Lance:** Antecipar com lance reduz rendimento do capital\\n* **Inflação:** Reajuste anual pode elevar o valor da carta\\n\\n### Financiamento:\\n* **Custo Imediato:** Juros compostos começam a correr imediatamente\\n* **Comprometimento de Renda:** Parcelas fixas por longo prazo\\n\\n---\\n\\n⚙️ **Modelo de Comparação de Modalidades com Análise de Custo de Oportunidade**\\n\\n*Análise realizada em \" + $json.data_hora + \" com dados do Banco Central do Brasil*\" : \"# 🎯 Veredito Ótimo: **\" + $json.decisao + \"**\\n\\n**Grau de Confiança:** \" + $json.grau_confianca + \"\\n\\n> \" + $json.analise + \"\\n\\n---\\n\\n## 🔍 Análise de Sensibilidade (Robustez da Decisão)\\n\\n A decisão de **\" + $json.decisao + \"** permanece válida enquanto a Selic estiver acima de **\" + $json.selic_equilibrio + \"%**.\\n\\n| Variável | Valor Atual | Limite de Decisão | Margem de Segurança |\\n|----------|-------------|-------------------|---------------------|\\n| Selic Líquida | \" + $json.selic_anual_liquida + \"% a.a. | \" + $json.selic_equilibrio + \"% a.a. | \" + ($json.margem_seguranca_selic > 0 ? \"+\" : \"\") + $json.margem_seguranca_selic + \"% |\\n| Inflação (IPCA) | \" + $json.ipca_acumulado + \"% a.a. | \" + $json.limite_ipca + \"% a.a. | \" + ($json.margem_seguranca_ipca > 0 ? \"+\" : \"\") + $json.margem_seguranca_ipca + \"% |\\n| Custo da Dívida | \" + $json.custo_divida_real + \"% a.a. | \" + $json.selic_anual_liquida + \"% a.a. | \" + ($json.spread_real > 0 ? \"+\" : \"\") + $json.spread_real + \"% |\\n\\n**Status:** \" + $json.status_robustez + \"\\n\\n---\\n\\n## 💡 Insight de Pesquisa Operacional\\n\\n\" + $json.insight_po + \"\\n\\n---\\n\\n## 📉 Comparativo de Valor Presente Líquido (VPL)\\n\\nO VPL indica o valor de hoje do benefício financeiro ao longo de **\" + $json.prazo_meses + \" meses**.\\n\\n| Cenário | Valor Presente (VPL) |\\n|---------|----------------------|\\n| 💰 Estratégia de Investimento | R$ \" + $json.vpl_investir + \" |\\n| 🔨 Estratégia de Amortização | R$ \" + $json.vpl_amortizar + \" |\\n| 📈 **Vantagem Financeira Real** | **R$ \" + $json.ganho_vpl + \"** |\\n\\n### Δ VPL (Diferencial):\\n**\" + ($json.delta_vpl > 0 ? \"+\" : \"\") + \"R$ \" + $json.delta_vpl + \"** a favor de \" + $json.decisao + \"\\n\\n---\\n\\n## 📈 Projeção de Riqueza Líquida\\n\\n### Cenário 1: INVESTIR\\n* **Valor Final em \" + $json.prazo_meses + \" meses:** R$ \" + $json.ganho_investimento + \"\\n* **Valor Presente Líquido (VPL):** R$ \" + $json.vpl_investir + \"\\n* **Patrimônio Líquido Final:** R$ \" + $json.patrimonio_final_investir + \"\\n\\n### Cenário 2: AMORTIZAR\\n* **Economia em Juros:** R$ \" + $json.economia_amortizacao + \"\\n* **Valor Presente Líquido (VPL):** R$ \" + $json.vpl_amortizar + \"\\n* **Patrimônio Líquido Final:** R$ \" + $json.patrimonio_final_amortizar + \"\\n\\n---\\n\\n## ⏳ Projeção de Tempo (Saving)\\n\\n* **Redução de Prazo:** Este aporte equivale a **\" + $json.parcelas_economizadas + \" parcelas** deletadas do futuro.\\n* **Valor Final Estimado:** Ao final do contrato, sua riqueza líquida será **R$ \" + $json.diferenca_patrimonial + \" maior** seguindo esta estratégia.\\n\\n---\\n\\n## 🎲 Simulação de Monte Carlo (\" + $json.simulacoes_total + \" cenários)\\n\\n**Cenários Favoráveis:** \" + $json.cenarios_favoraveis + \"/\" + $json.simulacoes_total + \" (\" + $json.confianca_percentual + \"%)\\n\\n**Método:** Box-Muller Transform com distribuição normal\\n\\n**Parâmetros Estocásticos:**\\n* Volatilidade Selic: \" + $json.volatilidade_selic + \"% a.a.\\n* Volatilidade IPCA: \" + $json.volatilidade_ipca + \"% a.a.\\n\\n**VPL Médio Simulado:**\\n* Investir: R$ \" + $json.vpl_medio_investir + \"\\n* Amortizar: R$ \" + $json.vpl_medio_amortizar + \"\\n* Expectativa de Ganho Médio: R$ \" + $json.expectativa_ganho_medio + \"\\n\\nEm **\" + $json.confianca_percentual + \"% dos cenários simulados** para os próximos \" + $json.prazo_meses + \" meses, \" + ($json.decisao === \"INVESTIR\" ? \"investir continua sendo mais vantajoso que amortizar\" : \"amortizar continua sendo mais vantajoso que investir\") + \".\\n\\n---\\n\\n## 📋 Memória de Cálculo\\n\\n### Parâmetros de Entrada:\\n* **Valor da Dívida:** R$ \" + $json.valor_divida + \"\\n* **Tipo de Dívida:** \" + $json.tipo_divida + \"\\n* **Taxa Nominal:** \" + $json.custo_divida_nominal + \"% a.a.\\n\" + ($json.tipo_divida === \"Pós-fixada (IPCA+)\" ? \"* **Taxa Real (Nominal + IPCA):** \" + $json.custo_divida_real + \"% a.a.\" : \"\") + \"\\n* **Valor do Aporte:** R$ \" + $json.valor_aporte + \"\\n* **Prazo de Análise:** \" + $json.prazo_meses + \" meses\\n\\n### Dados de Mercado (BCB):\\n* **Selic Diária (BCB SGS 11):** \" + $json.selic_diaria_bcb + \"%\\n* **Selic Bruta Anualizada:** \" + $json.selic_anual_bruta + \"% a.a.\\n* **Selic Líquida (após IR \" + $json.aliquota_ir + \"%):** \" + $json.selic_anual_liquida + \"% a.a.\\n* **IPCA Acumulado (12 meses):** \" + $json.ipca_acumulado + \"%\\n\\n### Metodologia:\\n* **Custo de Oportunidade:** Taxa Selic Líquida (\" + $json.selic_anual_liquida + \"%)\\n* **Taxa da Dívida (CET):** \" + $json.custo_divida_real + \"%\\n* **Simulação Estocástica:** Monte Carlo com Box-Muller Transform (\" + $json.simulacoes_total + \" cenários)\\n* **VPL:** Somatório de fluxos mensais descontados pela taxa de oportunidade\\n* **IR Regressivo:** Conforme prazo de aplicação (\" + $json.aliquota_ir + \"%)\\n\\n---\\n\\n💡 **Nota do Consultor:** \" + ($json.decisao === \"INVESTIR\" ? \"A escolha pelo investimento apresenta um VPL superior, indicando que o custo de manter a dívida é menor do que o rendimento gerado pelo capital no mercado financeiro sob as condições atuais.\" : \"A escolha pela amortização apresenta um VPL superior, indicando que a economia de juros supera o rendimento líquido disponível no mercado sob as condições atuais.\") + \"\\n\\n---\\n\\n⚙️ **Modelo de Apoio à Decisão baseado em critérios de VPL, Otimização Linear e Simulação Estocástica.**\\n\\n📊 **Dados salvos para análise histórica e governança.**\\n\\n*Análise realizada em \" + $json.data_hora + \" com dados do Banco Central do Brasil*\") }}",
+        "options": {}
+      },
+      "id": "a40e98df-8b59-43f8-ac23-2f86265ba464",
+      "name": "Responder com HTML",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1136,
+        600
+      ],
+      "webhookId": "**INSERIR WEBHOOK ID**"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "638c2fcb-f10b-4fd0-8878-7a795a9aa3c1",
+      "name": "Combinar Dados",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        688,
+        504
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.433/dados/ultimos/12?formato=json",
+        "options": {}
+      },
+      "id": "30e036d4-31cb-4661-96da-ac8d19fd5871",
+      "name": "Buscar IPCA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        464,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.modalidade }}",
+                    "rightValue": "Amortização vs Investimento",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Amortização"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.modalidade }}",
+                    "rightValue": "Análise de Entrada (LTV)",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "LTV"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.modalidade }}",
+                    "rightValue": "Financiamento vs Consórcio",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Consórcio"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e09cae2e-98a2-4fa0-9964-faa971450354",
+      "name": "Rotear por Modalidade",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1136,
+        376
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "**INSERIR ID DO DOCUMENTO GOOGLE SHEETS**",
+          "mode": "list",
+          "cachedResultName": "n8n_amortizar_ou_investir",
+          "cachedResultUrl": "**INSERIR URL DO GOOGLE SHEETS**"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Amortizacao",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "decisao",
+              "displayName": "decisao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "analise",
+              "displayName": "analise",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "insight_po",
+              "displayName": "insight_po",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "grau_confianca",
+              "displayName": "grau_confianca",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confianca_percentual",
+              "displayName": "confianca_percentual",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "selic_anual_bruta",
+              "displayName": "selic_anual_bruta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "selic_anual_liquida",
+              "displayName": "selic_anual_liquida",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "selic_equilibrio",
+              "displayName": "selic_equilibrio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "margem_seguranca_selic",
+              "displayName": "margem_seguranca_selic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "margem_seguranca_ipca",
+              "displayName": "margem_seguranca_ipca",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "limite_ipca",
+              "displayName": "limite_ipca",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "custo_divida_nominal",
+              "displayName": "custo_divida_nominal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "custo_divida_real",
+              "displayName": "custo_divida_real",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ipca_acumulado",
+              "displayName": "ipca_acumulado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "spread_real",
+              "displayName": "spread_real",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vpl_investir",
+              "displayName": "vpl_investir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vpl_amortizar",
+              "displayName": "vpl_amortizar",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "delta_vpl",
+              "displayName": "delta_vpl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ganho_vpl",
+              "displayName": "ganho_vpl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ganho_investimento",
+              "displayName": "ganho_investimento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "economia_amortizacao",
+              "displayName": "economia_amortizacao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "diferenca_patrimonial",
+              "displayName": "diferenca_patrimonial",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "patrimonio_final_investir",
+              "displayName": "patrimonio_final_investir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "patrimonio_final_amortizar",
+              "displayName": "patrimonio_final_amortizar",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "parcelas_economizadas",
+              "displayName": "parcelas_economizadas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aliquota_ir",
+              "displayName": "aliquota_ir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "prazo_meses",
+              "displayName": "prazo_meses",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "valor_aporte",
+              "displayName": "valor_aporte",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "valor_divida",
+              "displayName": "valor_divida",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "simulacoes_total",
+              "displayName": "simulacoes_total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cenarios_favoraveis",
+              "displayName": "cenarios_favoraveis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vpl_medio_investir",
+              "displayName": "vpl_medio_investir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vpl_medio_amortizar",
+              "displayName": "vpl_medio_amortizar",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "expectativa_ganho_medio",
+              "displayName": "expectativa_ganho_medio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "volatilidade_selic",
+              "displayName": "volatilidade_selic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "volatilidade_ipca",
+              "displayName": "volatilidade_ipca",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status_robustez",
+              "displayName": "status_robustez",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data_hora",
+              "displayName": "data_hora",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "selic_diaria_bcb",
+              "displayName": "selic_diaria_bcb",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d691b57d-bfc2-48ff-936b-5dc44b111600",
+      "name": "Salvar Amortização",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1360,
+        208
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "**INSERIR ID DAS CREDENCIAIS GOOGLE SHEETS**",
+          "name": "Google Sheets OAuth2 API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "**INSERIR ID DO DOCUMENTO GOOGLE SHEETS**",
+          "mode": "list",
+          "cachedResultName": "n8n_amortizar_ou_investir",
+          "cachedResultUrl": "**INSERIR URL DO GOOGLE SHEETS**"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "LTV",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b04be8ad-f519-443b-ad92-8a7c87ae7a19",
+      "name": "Salvar LTV",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1360,
+        400
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "**INSERIR ID DAS CREDENCIAIS GOOGLE SHEETS**",
+          "name": "Google Sheets OAuth2 API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "**INSERIR ID DO DOCUMENTO GOOGLE SHEETS**",
+          "mode": "list",
+          "cachedResultName": "n8n_amortizar_ou_investir",
+          "cachedResultUrl": "**INSERIR URL DO GOOGLE SHEETS**"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Consorcio",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6f8bddbc-64de-4ded-bbb6-cdc3bcbdd79d",
+      "name": "Salvar Consórcio",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1360,
+        592
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "**INSERIR ID DAS CREDENCIAIS GOOGLE SHEETS**",
+          "name": "Google Sheets OAuth2 API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Buscar Taxa Selic": {
+      "main": [
+        [
+          {
+            "node": "Combinar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulador de Amortização Inteligente": {
+      "main": [
+        [
+          {
+            "node": "Buscar Taxa Selic",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Buscar IPCA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analisar e Recomendar": {
+      "main": [
+        [
+          {
+            "node": "Responder com HTML",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rotear por Modalidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combinar Dados": {
+      "main": [
+        [
+          {
+            "node": "Analisar e Recomendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar IPCA": {
+      "main": [
+        [
+          {
+            "node": "Combinar Dados",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Rotear por Modalidade": {
+      "main": [
+        [
+          {
+            "node": "Salvar Amortização",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Salvar LTV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Salvar Consórcio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "**INSERIR VERSION ID**",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "**INSERIR INSTANCE ID**"
+  },
+  "id": "**INSERIR WORKFLOW ID**",
+  "tags": []
+}
