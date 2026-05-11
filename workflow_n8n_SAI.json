@@ -12,7 +12,7 @@
       "typeVersion": 4.4,
       "position": [
         464,
-        408
+        416
       ]
     },
     {
@@ -25,7 +25,7 @@
       "typeVersion": 2,
       "position": [
         912,
-        504
+        512
       ]
     },
     {
@@ -148,9 +148,9 @@
       "typeVersion": 2.5,
       "position": [
         240,
-        504
+        512
       ],
-      "webhookId": "**INSERIR WEBHOOK ID**"
+      "webhookId": "d1a98ee8-062d-4c66-9319-ba11c7010d9f"
     },
     {
       "parameters": {
@@ -165,9 +165,9 @@
       "typeVersion": 2.5,
       "position": [
         1136,
-        600
+        608
       ],
-      "webhookId": "**INSERIR WEBHOOK ID**"
+      "webhookId": "ad389211-1e31-4294-89f1-6c164d5f347f"
     },
     {
       "parameters": {
@@ -181,7 +181,7 @@
       "typeVersion": 3.2,
       "position": [
         688,
-        504
+        512
       ]
     },
     {
@@ -195,7 +195,7 @@
       "typeVersion": 4.4,
       "position": [
         464,
-        600
+        608
       ]
     },
     {
@@ -281,7 +281,7 @@
       "typeVersion": 3.4,
       "position": [
         1136,
-        376
+        384
       ]
     },
     {
@@ -289,10 +289,10 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "**INSERIR ID DO DOCUMENTO GOOGLE SHEETS**",
+          "value": "14qyx7Pcod4gJAxd_xk2AaTYQAjGH_BGPkAIKsqFYCvI",
           "mode": "list",
           "cachedResultName": "n8n_amortizar_ou_investir",
-          "cachedResultUrl": "**INSERIR URL DO GOOGLE SHEETS**"
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14qyx7Pcod4gJAxd_xk2AaTYQAjGH_BGPkAIKsqFYCvI/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
@@ -671,7 +671,7 @@
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
-          "id": "**INSERIR ID DAS CREDENCIAIS GOOGLE SHEETS**",
+          "id": "ziHtttfcu3goKic8",
           "name": "Google Sheets OAuth2 API"
         }
       },
@@ -682,10 +682,10 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "**INSERIR ID DO DOCUMENTO GOOGLE SHEETS**",
+          "value": "14qyx7Pcod4gJAxd_xk2AaTYQAjGH_BGPkAIKsqFYCvI",
           "mode": "list",
           "cachedResultName": "n8n_amortizar_ou_investir",
-          "cachedResultUrl": "**INSERIR URL DO GOOGLE SHEETS**"
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14qyx7Pcod4gJAxd_xk2AaTYQAjGH_BGPkAIKsqFYCvI/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
@@ -712,7 +712,7 @@
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
-          "id": "**INSERIR ID DAS CREDENCIAIS GOOGLE SHEETS**",
+          "id": "ziHtttfcu3goKic8",
           "name": "Google Sheets OAuth2 API"
         }
       },
@@ -723,10 +723,10 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "**INSERIR ID DO DOCUMENTO GOOGLE SHEETS**",
+          "value": "14qyx7Pcod4gJAxd_xk2AaTYQAjGH_BGPkAIKsqFYCvI",
           "mode": "list",
           "cachedResultName": "n8n_amortizar_ou_investir",
-          "cachedResultUrl": "**INSERIR URL DO GOOGLE SHEETS**"
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14qyx7Pcod4gJAxd_xk2AaTYQAjGH_BGPkAIKsqFYCvI/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
@@ -753,7 +753,7 @@
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
-          "id": "**INSERIR ID DAS CREDENCIAIS GOOGLE SHEETS**",
+          "id": "ziHtttfcu3goKic8",
           "name": "Google Sheets OAuth2 API"
         }
       },
@@ -859,11 +859,11 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "**INSERIR VERSION ID**",
+  "versionId": "d3f5ea28-a40f-4d7e-9072-5ad6d70fd250",
   "meta": {
     "templateCredsSetupCompleted": true,
-    "instanceId": "**INSERIR INSTANCE ID**"
+    "instanceId": "fb9084283f556f2415f45041cbf41aafe628f89548bb468844ba2d5f6dbb3e84"
   },
-  "id": "**INSERIR WORKFLOW ID**",
+  "id": "ADY488ScTnrlt9vV",
   "tags": []
 }
